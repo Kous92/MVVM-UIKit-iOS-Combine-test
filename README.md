@@ -1,4 +1,4 @@
-# iOS (Swift 5): Test MVVM avec Combine et UIKit
+# iOS (Swift 5): MVVM test with Combine and UIKit
 
 **MVVM** and functional reactive programming (FRP) are very used in iOS development inside companies. Here, there is an example where I implement the **MVVM** architecture with **Combine**, Apple's official framework, being the equivalent of the famous **RxSwift** framework. All with **UIKit**.
 
@@ -37,7 +37,7 @@ Le data binding est un lien entre la vue et la vue modèle, où la vue par le bi
     + Unsuitable for very large and complex projects, it will be better to switch to **VIPER** or **Clean Architecture (VIP, MVVM, Clean Swift, ...)**. **MVVM** can be integrated inside a **Clean Architecture**.
     + Complex mastery for beginners (especially with **UIKit**)
 
-![MVVM](https://github.com/Kous92/Test-MVVM-Combine-UIKit-iOS/blob/main/MVVM.png)<br>
+![MVVM](https://github.com/Kous92/MVVM-UIKit-iOS-Combine-test/blob/main/MVVM.png)<br>
 
 ## <a name="combine"></a>Functional Reactive Programming with Combine
 
