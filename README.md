@@ -6,7 +6,7 @@
 - [MVVM architecture](#mvvm)
 - [Functional reactive programming with Combine](#combine)
 - [Example](#example)
-- [Used elements with Combine]()
+- [Used elements with Combine](#u)
     + [Updating](#update)
     + [Search](#search)
     + [Filtering](#filtering)
@@ -14,7 +14,7 @@
 
 ## <a name="mvvm"></a>MVVM architecture
 
-MVVM architecture (Model View ViewModel) is a design pattern which allows to seperate business logic and UI interactions. Starting from MVC, the view and the controller are now one in **MVVM**. In iOS with UIKit, the `ViewController` belongs to the view part. Furthermore, the `ViewController` no longer have to manage business logic and no longer have references to data models.
+MVVM architecture (Model View ViewModel) is a design pattern which allows to separate business logic and UI interactions. Starting from MVC, the view and the controller are now one in **MVVM**. In iOS with UIKit, the `ViewController` belongs to the view part. Furthermore, the `ViewController` no longer have to manage business logic and no longer have references to data models.
 
 The novelty being the View Model is that it has the responsibility to manage the business logic and update the view by disposing of properties that the view will display through data binding.
 
@@ -95,7 +95,7 @@ Here, I propose as example a real-time refresh of a `TableView` of PSG players w
 
 **ICI C'EST PARIS (HERE IT'S PARIS) 🔵🔴**
 
-### The uses elements of Combine in this example
+### <a name="u">The used elements of Combine in this example
 
 #### 1) <a name="update"></a> Reactive update
 
@@ -179,6 +179,101 @@ final class MainViewController: UIViewController {
         }
         
         setUpdateBinding()
+    }
+}
+```
+
+#### 2) <a name="search"></a> Reactive search
+
+For reactive search, I use 2 elements in my view model (here `PSGPlayersViewModel`). I take back the updating subject `updateResult`, and a `@Published` property for the search that received in real-time a `String` in order to search the wanted player. This element will act as an observer which will subscribe to the view elements. It will also be necessary to use a `AnyCancellable` to manage the cancellation of subscriptions and avoid memory leaks.
+
+```swift
+import Combine
+
+final class PSGPlayersViewModel {
+    // Subjects, those who emits and receive events.
+    var updateResult = PassthroughSubject<Bool, APIError>()
+    @Published var searchQuery = ""
+
+    // For memory management and cancellation of subscriptions 
+    private var subscriptions = Set<AnyCancellable>()
+}
+```
+
+Here we set the data binding with the view, where the `searchQuery` observer subscribes to the view events. The property being a `Publisher<String>`, you must precede the name of the variable with a `$` to receive the events. In the context of the research, we will first receive in the main thread with `.receive(on: RunLoop.main)`, ignore event duplicates with `removeDuplicates()`. Next, do not overload the main thread stream by delaying the reception of events with `.debounce(for: .seconds(0.5), scheduler: RunLoop.main)`. The reception of the value to perform the action is done with `sink(receiveValue: )`. We store after the subscription in an `AnyCancellable` list in order to avoid memory leaks.
+
+```swift
+final class PSGPlayersViewModel {
+    ...
+    private func setBindings() {
+        $searchQuery
+            .receive(on: RunLoop.main)
+            .removeDuplicates()
+            .debounce(for: .seconds(0.5), scheduler: RunLoop.main)
+            .sink { [weak self] value in
+                self?.searchPlayer()
+            }.store(in: &subscriptions)
+    }
+}
+```
+
+In the `ViewController`, we do the same thing as in the view model with a `Publisher<String>` (`@Published searchQuery`). In the treatment of the subscription with `sink(receiveValue: )`, we affect the searched value to the view model observer. The received value in the view model will trigger automatically the `searchPlayer()` method. In `textDidChange` function of `UISearchBarDelegate`, when the texte of search bar changed, the action inside `sink(receiveValue: )` will be triggered.
+
+```swift
+final class MainViewController: UIViewController {
+    ...
+    @Published private(set) var searchQuery = ""
+    private var subscriptions = Set<AnyCancellable>()
+    private var viewModel = PSGPlayersViewModel()
+
+    private func setBindings() {
+        func setSearchBinding() {
+            $searchQuery
+                .receive(on: RunLoop.main)
+                .removeDuplicates()
+                .sink { [weak self] value in
+                    print(value)
+                    self?.viewModel.searchQuery = value
+                }.store(in: &subscriptions)
+        }
+
+        func setUpdateBinding() {
+            ...
+        }
+        
+        setSearchBinding()
+        setUpdateBinding()
+    }
+}
+
+extension MainViewController: UISearchBarDelegate {
+    // It's here that when we modify the search bar text. The subscription will send automatically a new value to the view model observer.
+    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+        self.searchQuery = searchText
+    }
+}
+```
+
+And of course, the `searchPlayer()` method will emit through `updateResult` subject a refresh signal with `true` if there is data after filtering, `false` if the list is empty.
+```swift
+final class PSGPlayersViewModel {
+    ...
+    private func searchPlayer() {
+        guard !searchQuery.isEmpty else {
+            activeFilter = .noFilter
+            filteredPlayersViewModels = playersViewModel
+            updateResult.send(true)
+            
+            return
+        }
+        
+        filteredPlayersViewModels = playersViewModel.filter { $0.name.lowercased().contains(searchQuery.lowercased()) }
+        
+        if filteredPlayersViewModels.count > 0 {
+            updateResult.send(true)
+        } else {
+            updateResult.send(false)
+        }
     }
 }
 ```
