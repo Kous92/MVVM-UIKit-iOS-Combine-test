@@ -18,8 +18,7 @@ MVVM architecture (Model View ViewModel) is a design pattern which allows to sep
 
 The novelty being the View Model is that it has the responsibility to manage the business logic and update the view by disposing of properties that the view will display through data binding.
 
-Data binding is a link between the view and the view model, where the view through user interactions will send a signal to the view model to run a specific business logic. This signal will allow 
-Le data binding est un lien entre la vue et la vue modèle, où la vue par le biais des interactions avec l'utilisateur va envoyer un signal à la vue modèle afin d'effectuer une logique métier spécifique. This signal will allow the update of the data of the model data and thus allow automatic refresh of the view. Data binding in iOS can be done with:
+Data binding is a link between the view and the view model, where the view through user interactions will send a signal to the view model to run a specific business logic. This signal will allow the update of the data of the model data and thus allow automatic refresh of the view. Data binding in iOS can be done with:
 - Delegation
 - Callbacks (closures)
 - Functional Reactive Programming (**RxSwift, Combine**)
@@ -64,10 +63,122 @@ Functional Reactive Programming is perfectly suitable for the data binding of **
 
 On the other hand, it is also necessary to use `Cancellables` which will cancel the subscription of the observers (`AnyCancellable` with **Combine**) and manage the memory deallocation in order to avoid **memory leaks**.
 
-Functional reactive programming remains one of the most complex concepts to learn and master
-La programmation réactive fonctionnelle reste l'une des notions les plus complexes à apprendre et à maîtriser (especially by oneself in autodidact), the definition itself is complex to to understand and assimilate.
+Functional reactive programming remains one of the most complex concepts to learn and master (especially by oneself in autodidact), the definition itself is complex to to understand and assimilate.
 But once mastered, this concept becomes a powerful weapon to write optimal asynchronous functionnalities (chaining HTTP calls, asynchronous server check before validation, ...), having reactive interface which updates itself automatically when changes appended in real time from the data stream, to replace delegation (passing data backward from secondary to main view, ...), ... **Furthermore, knowing how to use reactive programming is also essential to integrate an iOS application project in a compan, being one of the most required skills.**
 
 **Combine** requires **iOS 13** or above for any iOS application. The main advantage of **Combine** is at the level of performance and optimization, since everything is managed by Apple, and Apple can go at the deepest of the operating system elements, thing that third-party framework developers cannot do. External framework dependency is now reduced.
 
 Compared to **RxSwift**, **Combine** remains less complete in terms of operators for specific and advanced cases. Also **Combine** is not fully suitable with **UIKit** especially for bindings with UI components, thing that is more complete with **RxSwift** (**RxCocoa**).
+
+## <a name="example"></a>Example
+
+Here, I propose as example a real-time refresh of a `TableView` of PSG players with **MVVM** architecture. This update is done in several ways:
+1. At app launching, through an HTTP `GET` call from an online JSON file. The donwloaded data are therefore arranged on `ViewModel` dedicated to `TableViewCell`.
+2. When searching a player, filtering will be applied automatically depending on the text entered, and then refresh in real-time the UI list with filtered data.
+
+<img src="https://github.com/Kous92/Test-MVVM-Combine-UIKit-iOS/blob/main/ReactiveSearch.gif" width="350">
+
+3. By tapping on filtering button, a `ViewController` appears to allow the selection of a filter in order to update the list of the main view from the following criterias: 
+    + Goalkeepers
+    + Defenders
+    + Midfielders
+    + Forwards
+    + PSG trained players 🔵🔴
+    + By alphabetical order
+    + By number in ascending order
+
+<img src="https://github.com/Kous92/Test-MVVM-Combine-UIKit-iOS/blob/main/ReactiveFilters.gif" width="350">
+
+4. By tapping on a cell, a `ViewController` appears to display the details of selected players (image, name, number, position, trained or not at PSG, birth date, country, size, weight, number of played matched and goals scored)
+
+<img src="https://github.com/Kous92/Test-MVVM-Combine-UIKit-iOS/blob/main/ReactiveDetails.gif" width="350">
+
+**ICI C'EST PARIS (HERE IT'S PARIS) 🔵🔴**
+
+### The uses elements of Combine in this example
+
+#### 1) <a name="update"></a> Reactive update
+
+For reactive update, I use a subject in my view model (here `PSGPlayersViewModel`). When the app is launched and made the HTTP call from the server, the subject will emit a success event if the download is complete and if the list of view models of `TableViewCell` is updated. The update subject `updateResult` is a `PassthroughSubject`. A subject have 2 types in his declaration: a value and an element for the errors (`Never` if no errors to handle). Here it's a case if an error occurs, especially at app launch during the HTTP call (no Internet connection, error 404, JSON decoding to objects,...). The particularity of the `PassthroughSubject` is that there is no need to give an initial value to emit.
+
+```swift
+import Combine
+
+final class PSGPlayersViewModel {
+    // Subjects, those who emits and receive events.
+    var updateResult = PassthroughSubject<Bool, APIError>()
+}
+```
+
+When downloading, if the data are updated, we use `send(value)` method to emit an event.
+If an error occurs, we use `send(completion: .failure(error)`. Otherwise, we send a value.
+```swift
+import Combine
+
+final class PSGPlayersViewModel {
+    ...
+    func getPlayers() {
+        apiService.fetchPlayers { [weak self] result in
+            switch result {
+            case .success(let response):
+                self?.playersData = response
+                self?.parseData()
+            case .failure(let error):
+                print(error.rawValue)
+                self?.updateResult.send(completion: .failure(error)) // Emit an error
+            }
+        }
+    }
+
+    private func parseData() {
+        guard let data = playersData, data.players.count > 0 else {
+            // No player downloaded
+            updateResult.send(false)
+            
+            return
+        }
+        
+        data.players.forEach { playersViewModel.append(PSGPlayerCellViewModel(player: $0)) }
+        filteredPlayersViewModels = playersViewModel
+        updateResult.send(true) // We notify the view that the data are updated to refresh the TableView
+    }
+}
+```
+
+At `ViewController` level, we use `updateResult` propery in order to do the data binding between view and view model. Given that reactive operations are asynchronous, we begin with `receive(on: )` to precise on which thread we will receive the value. UI operation can be done only on the main thread, so we will put in parameter `RunLoop.main` or `DispatchQueue.main` (both are same).
+
+The, the subscription to process the events is done with `sink(completion: , receive: value)`. In `completion`, it's here when we process 2 situations, either if the stream stops emitting, or if there is an error. In `receiveValue`, it's here when we can do the operations UI like refreshing `TableView`. We store after the subscription in an `AnyCancellable` list in order to avoid memory leaks.
+```swift
+final class MainViewController: UIViewController {
+    ...
+    private var subscriptions = Set<AnyCancellable>()
+    private var viewModel = PSGPlayersViewModel()
+
+    private func setBindings() {
+        func setUpdateBinding() {
+            // View receives in real-time the emitted event by the subject
+            viewModel.updateResult.receive(on: RunLoop.main).sink { completion in
+                switch completion {
+                case .finished:
+                    print("OK: done")
+                case .failure(let error):
+                    // We can show for example an alert to notify directly that an error has occured
+                    print("Error received: \(error.rawValue)")
+                }
+            } receiveValue: { [weak self] updated in
+                // View model data are updated, we refresh the list
+                self?.loadingSpinner.stopAnimating()
+                self?.loadingSpinner.isHidden = true
+                
+                if updated {
+                    self?.updateTableView()
+                } else {
+                    self?.displayNoResult()
+                }
+            }.store(in: &subscriptions)
+        }
+        
+        setUpdateBinding()
+    }
+}
+```
